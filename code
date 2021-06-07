@@ -1,0 +1,122 @@
+Task 1: Create a project jumphost instance
+You will use this instance to perform maintenance for the project.
+
+Requirements:
+
+Name the instance nucleus-jumphost.
+Use an f1-micro machine type.
+Use the default image type (Debian Linux).
+
+Create VM instance on Google Cloud Console.
+Refer to the example on the video below
+
+https://www.youtube.com/watch?v=D-Wf-ZzH1PE
+
+Task 2: Create a Kubernetes service cluster
+
+Create a cluster (in the us-east1-b zone) to host the service.
+Use the Docker container hello-app (gcr.io/google-samples/hello-app:2.0) as a place holder; the team will replace the container with their own work later.
+Expose the app on port 8080.
+
+on Cloud Shell, Google Cloud Terminal for inputing command lines, enter the following
+
+#Set zone for the container you are about to create
+
+gcloud config set compute/zone us-east1-b
+
+#Create and authenticate the container
+
+gcloud container clusters create nucleus-jumphost-webserver1
+
+gcloud container clusters get-credentials nucleus-jumphost-webserver1
+
+#deploy the kubernetes container
+
+kubectl create deployment hello-app --image=gcr.io/google-samples/hello-app:2.0
+
+#expose the deployed application on port 8080
+
+kubectl expose deployment hello-app --type=LoadBalancer --port 8080
+
+kubectl get service
+
+
+Task 3: Set up an HTTP load balancer
+
+#You will serve the site via nginx web servers, but you want to ensure that the environment is fault-tolerant.
+#Create an HTTP load balancer with a managed instance group of 2 nginx web servers. Use the following code to configure the web servers; 
+#the team will replace this with their own configuration later.
+
+cat << EOF > startup.sh
+#! /bin/bash
+apt-get update
+apt-get install -y nginx
+service nginx start
+sed -i -- 's/nginx/Google Cloud Platform - '"\$HOSTNAME"'/' /var/www/html/index.nginx-debian.html
+EOF
+
+You need to:
+
+#Create an instance template.
+
+gcloud compute instance-templates create nginx-template --metadata-from-file startup-script=startup.sh
+
+#Create a target pool.
+
+gcloud compute target-pools create nginx-pool 
+
+#Create a managed instance group.
+
+gcloud compute instance-groups managed create nginx-group \
+--base-instance-name=nginx \
+--size=2 \
+--template=nginx-template \
+--target-pool nginx-pool
+
+#when prompted Y/n, type n
+#press enter
+#search for region us-east1 enter the numeric eg; 20 and enter
+
+#Create a firewall rule to allow traffic (80/tcp).
+
+gcloud compute firewall-rules create www-firewall --allow tcp:80
+
+gcloud compute forwarding-rules create nginx-lb \
+> --region us-east1 \
+> --ports=80 \
+> --target-pool nginx-pool  
+
+#Create a health check.
+
+gcloud compute http-health-checks create http-basic-check
+
+#Create a backend service, and attach the managed instance group.
+
+gcloud compute instance-groups managed set-named-ports nginx-group --named-ports http:80
+
+gcloud compute backend-services create nginx-backend \
+ --protocol=HTTP --http-health-checks=http-basic-check --global
+
+gcloud compute backend-services add-backend nginx-backend \
+ --instance-group nginx-group \
+ --instance-group-zone us-east1-b \
+ --global
+ 
+#Create a URL map, and target the HTTP proxy to route requests to your URL map.
+
+gcloud compute url-maps create web-map --default-service nginx-backend
+
+gcloud compute target-http-proxies create http-lb-proxy --url-map web-map
+
+#Create a forwarding rule.
+
+gcloud compute forwarding-rules create http-content-rule \
+--global \
+--target-http-proxy=http-lb-proxy \
+--ports=80
+
+#optional commands to monitor forwarding rules and instances list
+
+gcloud compute instances list
+
+gcloud compute forwarding-rules list
